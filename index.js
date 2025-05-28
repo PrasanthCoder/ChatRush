@@ -6,11 +6,11 @@ const path = require("path");
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
-  pingTimeout: 30000,
-  pingInterval: 10000,
   cors: {
     origin: "*",
     methods: ["GET", "POST"],
+    pingTimeout: 60000, // Increase to 60 seconds (default is 20000)
+    pingInterval: 25000, // Keep default (25 seconds)
   },
 });
 

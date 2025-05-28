@@ -4,10 +4,10 @@ import { FaImage } from "react-icons/fa"; // Import FaImage from react-icons
 
 const socket = io({
   autoConnect: false,
-  reconnection: true, // (default: true)
-  reconnectionAttempts: 5, // Number of times to retry (default: Infinity)
-  reconnectionDelay: 2000, // Wait 2 seconds between attempts (default: 1000 ms)
-  reconnectionDelayMax: 10000, // Max delay between attempts (default: 5000 ms)
+  reconnection: true, // Enable reconnection
+  reconnectionAttempts: Infinity, // Keep trying to reconnect
+  reconnectionDelay: 1000, // Start with 1 second delay
+  reconnectionDelayMax: 5000, // Max delay of 5 seconds
 }); // Replace with your local IP, disable autoConnect
 
 function App() {
