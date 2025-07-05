@@ -9,8 +9,6 @@ const io = socketIo(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"],
-    pingTimeout: 60000, // Increase to 60 seconds (default is 20000)
-    pingInterval: 25000, // Keep default (25 seconds)
   },
 });
 
