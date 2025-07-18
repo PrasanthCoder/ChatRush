@@ -802,7 +802,7 @@ function App() {
       {/* Header */}
       <header className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white sticky top-0 z-10 shadow-lg">
         <div className="flex-row max-w-2xl mx-auto px-4 py-4">
-          <h1 className="text-2xl font-extrabold tracking-tight">ChatRush</h1>
+          <h1 className="text-2xl font-extrabold tracking-tight">ConnectMe</h1>
           <h1>Your chats are Anonymous and Encrypted!</h1>
         </div>
       </header>
