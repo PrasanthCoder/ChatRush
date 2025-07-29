@@ -1,14 +1,17 @@
 import { useState, useEffect, useRef } from "react";
 import io from "socket.io-client";
-import { FaImage } from "react-icons/fa"; // Import FaImage from react-icons
+import { FaImage } from "react-icons/fa";
+import { formatTimestamp } from "./utils/formatConvertions.js";
+import * as encryption from "./utils/encryption.js";
+import { useChatActions } from "./hooks/useChatActions";
 
 const socket = io({
-  autoConnect: false,
+  autoConnect: false, // manual connection
   reconnection: true, // Enable reconnection
   reconnectionAttempts: Infinity, // Keep trying to reconnect
-  reconnectionDelay: 1000, // Start with 1 second delay
-  reconnectionDelayMax: 5000, // Max delay of 5 seconds
-}); // Replace with your local IP, disable autoConnect
+  reconnectionDelay: 500, // reconnection delay
+  reconnectionDelayMax: 2500, // Max delay of 2.5 second
+});
 
 function App() {
   const [page, setPage] = useState("home");
@@ -16,10 +19,8 @@ function App() {
   const [roomCode, setRoomCode] = useState("");
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState([]);
-  const [currentRoom, setCurrentRoom] = useState(null);
   const [roomType, setRoomType] = useState(null);
   const [myKeyPair, setMyKeyPair] = useState(null);
-  const [myNickname, setMyNickname] = useState(null);
   const [otherUserId, setOtherUserId] = useState(null);
   const [otherUserNickname, setOtherUserNickname] = useState(null);
   const [otherUserPublicKey, setOtherUserPublicKey] = useState(null);
@@ -34,7 +35,21 @@ function App() {
   const textareaRef = useRef(null); // Ref for textarea to reset height
   const fileInputRef = useRef(null); // Ref for file input
 
-  // Connect socket on mount
+  const { handleSendMessage, handleImageUpload } = useChatActions(
+    socket,
+    setMessages,
+    message, // Pass the current message state value
+    setMessage, // Pass the setter function
+    roomCode,
+    roomType,
+    otherUserPublicKey,
+    symmetricKey,
+    nickname,
+    formatTimestamp,
+    textareaRef
+  );
+
+  // socket connection after first render
   useEffect(() => {
     socket.connect();
     return () => {
@@ -42,15 +57,16 @@ function App() {
     };
   }, []);
 
-  // Generate key pair on mount
+  // key-pair gen after first render
   useEffect(() => {
     async function initializeKeys() {
       console.log("Initializing key pair");
-      const keyPair = await generateKeyPair();
-      if (keyPair) {
-        setMyKeyPair(keyPair);
+      const result = await encryption.generateKeyPair(setSecurityStatus);
+      if (result.success) {
         setSecurityStatus("Encryption: Ready (waiting for peer)");
+        setMyKeyPair(result.keyPair);
       } else {
+        setSecurityStatus(result.error);
         alert(
           "Failed to set up encryption. Please use a local IP (e.g., 192.168.1.x) or enable HTTPS."
         );
@@ -74,257 +90,6 @@ function App() {
     textarea.style.height = textarea.scrollHeight + "px";
   };
 
-  // Handle image upload
-  const handleImageUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    // Validate file type (only images)
-    const validImageTypes = ["image/jpeg", "image/png", "image/gif"];
-    if (!validImageTypes.includes(file.type)) {
-      alert("Please upload a valid image file (JPEG, PNG, or GIF).");
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const base64Image = event.target.result; // Base64 string of the image
-      await sendImageMessage(base64Image);
-    };
-    reader.readAsDataURL(file);
-
-    // Reset file input
-    e.target.value = null;
-  };
-
-  // Send image message (encrypt and emit)
-  const sendImageMessage = async (base64Image) => {
-    if (!currentRoom) return;
-
-    if (roomType === "two-user" && otherUserPublicKey) {
-      const aesKey = await generateSymmetricKey();
-      const { encrypted, iv } = await encryptMessageAES(base64Image, aesKey);
-      const exportedAesKey = await exportSymmetricKey(aesKey);
-      const encryptedKey = await encryptMessageRSA(
-        exportedAesKey,
-        otherUserPublicKey
-      );
-      socket.emit("sendEncryptedImage", {
-        roomCode: currentRoom,
-        encryptedImage: { encrypted, iv, encryptedKey },
-        roomType,
-      });
-      setMessages((prev) => [
-        ...prev,
-        {
-          sender: myNickname,
-          type: "image",
-          content: base64Image,
-          timestamp: formatTimestamp(),
-        },
-      ]);
-    } else if (roomType === "group" && symmetricKey) {
-      const { encrypted, iv } = await encryptMessageAES(
-        base64Image,
-        symmetricKey
-      );
-      socket.emit("sendEncryptedImage", {
-        roomCode: currentRoom,
-        encryptedImage: { encrypted, iv },
-        roomType,
-      });
-      setMessages((prev) => [
-        ...prev,
-        {
-          sender: myNickname,
-          type: "image",
-          content: base64Image,
-          timestamp: formatTimestamp(),
-        },
-      ]);
-    } else {
-      alert("Encryption not ready. Please wait for other users.");
-    }
-  };
-
-  // Encryption functions
-  async function generateKeyPair() {
-    try {
-      if (!window.crypto || !window.crypto.subtle) {
-        throw new Error("Web Crypto API not supported in this browser.");
-      }
-      console.log(
-        "Generating key pair, Protocol:",
-        window.location.protocol,
-        "Host:",
-        window.location.host,
-        "SecureContext:",
-        window.isSecureContext
-      );
-      const keyPair = await window.crypto.subtle.generateKey(
-        {
-          name: "RSA-OAEP",
-          modulusLength: 2048,
-          publicExponent: new Uint8Array([1, 0, 1]),
-          hash: "SHA-256",
-        },
-        true,
-        ["encrypt", "decrypt"]
-      );
-      console.log(
-        "Key pair generated successfully:",
-        !!keyPair.publicKey,
-        !!keyPair.privateKey
-      );
-      return keyPair;
-    } catch (err) {
-      console.error("Key generation failed:", err.message);
-      console.log("Browser info:", navigator.userAgent);
-      console.log(
-        "Protocol:",
-        window.location.protocol,
-        "Host:",
-        window.location.host,
-        "SecureContext:",
-        window.isSecureContext
-      );
-      setSecurityStatus(
-        "Encryption: Failed to set up keys. Use a local IP (e.g., 192.168.1.x) or enable HTTPS."
-      );
-      return null;
-    }
-  }
-
-  async function exportPublicKey(publicKey) {
-    console.log("Entering exportPublicKey");
-    if (!publicKey) {
-      console.error("Public key is null or undefined");
-      throw new Error("Cannot export null public key");
-    }
-    const exported = await window.crypto.subtle.exportKey("spki", publicKey);
-    console.log("Public key exported successfully");
-    return arrayBufferToBase64(exported);
-  }
-
-  async function importPublicKey(base64Key) {
-    const binaryKey = base64ToArrayBuffer(base64Key);
-    return await window.crypto.subtle.importKey(
-      "spki",
-      binaryKey,
-      { name: "RSA-OAEP", hash: "SHA-256" },
-      true,
-      ["encrypt"]
-    );
-  }
-
-  async function generateSymmetricKey() {
-    try {
-      return await window.crypto.subtle.generateKey(
-        { name: "AES-GCM", length: 256 },
-        true,
-        ["encrypt", "decrypt"]
-      );
-    } catch (err) {
-      console.error("Symmetric key generation failed:", err);
-      return null;
-    }
-  }
-
-  async function exportSymmetricKey(key) {
-    const exported = await window.crypto.subtle.exportKey("raw", key);
-    return arrayBufferToBase64(exported);
-  }
-
-  async function importSymmetricKey(base64Key) {
-    const binaryKey = base64ToArrayBuffer(base64Key);
-    return await window.crypto.subtle.importKey(
-      "raw",
-      binaryKey,
-      { name: "AES-GCM" },
-      true,
-      ["encrypt", "decrypt"]
-    );
-  }
-
-  async function encryptMessageRSA(message, publicKey) {
-    const encoded = new TextEncoder().encode(message);
-    const encrypted = await window.crypto.subtle.encrypt(
-      { name: "RSA-OAEP" },
-      publicKey,
-      encoded
-    );
-    return arrayBufferToBase64(encrypted);
-  }
-
-  async function encryptMessageAES(message, symmetricKey) {
-    const iv = window.crypto.getRandomValues(new Uint8Array(12));
-    const encoded = new TextEncoder().encode(message);
-    const encrypted = await window.crypto.subtle.encrypt(
-      { name: "AES-GCM", iv },
-      symmetricKey,
-      encoded
-    );
-    const encryptedBase64 = arrayBufferToBase64(encrypted);
-    return { encrypted: encryptedBase64, iv: arrayBufferToBase64(iv) };
-  }
-
-  async function decryptMessageRSA(encrypted, privateKey) {
-    try {
-      const data = base64ToArrayBuffer(encrypted);
-      const decrypted = await window.crypto.subtle.decrypt(
-        { name: "RSA-OAEP" },
-        privateKey,
-        data
-      );
-      return new TextDecoder().decode(decrypted);
-    } catch (err) {
-      console.error("Decryption failed:", err);
-      return "[Failed to decrypt message]";
-    }
-  }
-
-  async function decryptMessageAES(encryptedBase64, ivBase64, symmetricKey) {
-    try {
-      const iv = base64ToArrayBuffer(ivBase64);
-      const data = base64ToArrayBuffer(encryptedBase64);
-      const decrypted = await window.crypto.subtle.decrypt(
-        { name: "AES-GCM", iv },
-        symmetricKey,
-        data
-      );
-      return new TextDecoder().decode(decrypted);
-    } catch (err) {
-      console.error("AES decryption failed:", err);
-      return "[Failed to decrypt message]";
-    }
-  }
-
-  function arrayBufferToBase64(buffer) {
-    let binary = "";
-    const bytes = new Uint8Array(buffer);
-    for (let i = 0; i < bytes.byteLength; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return window.btoa(binary);
-  }
-
-  function base64ToArrayBuffer(base64) {
-    const binaryString = window.atob(base64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    return bytes.buffer;
-  }
-
-  // Format timestamp as HH:mm
-  const formatTimestamp = () => {
-    return new Date().toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
-
   // Socket.IO event handlers
   useEffect(() => {
     socket.on("roomCreated", async ({ roomCode, nickname, roomType: type }) => {
@@ -334,9 +99,7 @@ function App() {
         "myKeyPair:",
         !!myKeyPair
       );
-      setCurrentRoom(roomCode);
       setRoomType(type);
-      setMyNickname(nickname);
       setIsCreator(true);
       if (type === "group") {
         setUserNicknames(new Map([[socket.id, nickname]]));
@@ -362,16 +125,16 @@ function App() {
           "existingUsers:",
           existingUsers
         );
-        setCurrentRoom(roomCode);
         setRoomType(type);
-        setMyNickname(nickname);
         setIsCreator(false);
         if (type === "two-user") {
           setOtherUserNickname(existingUsers[0]?.nickname || "Unknown");
           setOtherUserId(existingUsers[0]?.userId || null);
           if (myKeyPair) {
             try {
-              const publicKey = await exportPublicKey(myKeyPair.publicKey);
+              const publicKey = await encryption.exportPublicKey(
+                myKeyPair.publicKey
+              );
               socket.emit("sharePublicKey", {
                 userId: existingUsers[0]?.userId || null,
                 publicKey,
@@ -424,11 +187,13 @@ function App() {
         setOtherUserNickname(nickname);
         if (myKeyPair) {
           try {
-            const myPublicKey = await exportPublicKey(myKeyPair.publicKey);
+            const myPublicKey = await encryption.exportPublicKey(
+              myKeyPair.publicKey
+            );
             socket.emit("sharePublicKey", {
               userId,
               publicKey: myPublicKey,
-              roomCode: currentRoom,
+              roomCode: roomCode,
             });
           } catch (err) {
             console.error("Failed to share public key in newUser:", err);
@@ -437,16 +202,18 @@ function App() {
       } else {
         setUserNicknames((prev) => new Map(prev).set(userId, nickname));
         if (isCreator && publicKey && symmetricKey) {
-          const importedPublicKey = await importPublicKey(publicKey);
-          const exportedSymmetricKey = await exportSymmetricKey(symmetricKey);
-          const encryptedSymmetricKey = await encryptMessageRSA(
+          const importedPublicKey = await encryption.importPublicKey(publicKey);
+          const exportedSymmetricKey = await encryption.exportSymmetricKey(
+            symmetricKey
+          );
+          const encryptedSymmetricKey = await encryption.encryptMessageRSA(
             exportedSymmetricKey,
             importedPublicKey
           );
           socket.emit("shareEncryptedSymmetricKey", {
             userId,
             encryptedSymmetricKey,
-            roomCode: currentRoom,
+            roomCode: roomCode,
           });
         }
         setSecurityStatus(
@@ -476,7 +243,7 @@ function App() {
       if (roomType === "two-user") {
         try {
           setOtherUserId(userId || otherUserId);
-          setOtherUserPublicKey(await importPublicKey(publicKey));
+          setOtherUserPublicKey(await encryption.importPublicKey(publicKey));
           setSecurityStatus("Encryption: Secured (end-to-end encrypted)");
         } catch (err) {
           console.error("Failed to process received public key:", err);
@@ -486,11 +253,11 @@ function App() {
 
     socket.on("receiveSymmetricKey", async ({ encryptedSymmetricKey }) => {
       try {
-        const decryptedKey = await decryptMessageRSA(
+        const decryptedKey = await encryption.decryptMessageRSA(
           encryptedSymmetricKey,
           myKeyPair.privateKey
         );
-        setSymmetricKey(await importSymmetricKey(decryptedKey));
+        setSymmetricKey(await encryption.importSymmetricKey(decryptedKey));
         setSecurityStatus(
           `Encryption: Secured (Symmetric, ${userNicknames.size - 1} peer(s))`
         );
@@ -500,7 +267,7 @@ function App() {
     });
 
     socket.on("newCreator", ({ roomCode }) => {
-      if (roomCode === currentRoom && roomType === "group") {
+      if (roomCode) {
         setIsCreator(true);
         setMessages((prev) => [
           ...prev,
@@ -510,9 +277,12 @@ function App() {
             timestamp: formatTimestamp(),
           },
         ]);
-        setSecurityStatus(
-          `Encryption: Secured (Symmetric, ${userNicknames.size - 1} peer(s))`
-        );
+
+        if (roomType === "group") {
+          setSecurityStatus(
+            `Encryption: Secured (Symmetric, ${userNicknames.size - 1} peer(s))`
+          );
+        }
       }
     });
 
@@ -557,12 +327,16 @@ function App() {
           let decrypted;
           if (type === "two-user") {
             const { encrypted, iv, encryptedKey } = encryptedMessage;
-            const decryptedKey = await decryptMessageRSA(
+            const decryptedKey = await encryption.decryptMessageRSA(
               encryptedKey,
               myKeyPair.privateKey
             );
-            const aesKey = await importSymmetricKey(decryptedKey);
-            decrypted = await decryptMessageAES(encrypted, iv, aesKey);
+            const aesKey = await encryption.importSymmetricKey(decryptedKey);
+            decrypted = await encryption.decryptMessageAES(
+              encrypted,
+              iv,
+              aesKey
+            );
             setMessages((prev) => [
               ...prev,
               {
@@ -574,7 +348,11 @@ function App() {
             ]);
           } else {
             const { encrypted, iv } = encryptedMessage;
-            decrypted = await decryptMessageAES(encrypted, iv, symmetricKey);
+            decrypted = await encryption.decryptMessageAES(
+              encrypted,
+              iv,
+              symmetricKey
+            );
             setMessages((prev) => [
               ...prev,
               {
@@ -596,12 +374,16 @@ function App() {
           let decrypted;
           if (type === "two-user") {
             const { encrypted, iv, encryptedKey } = encryptedImage;
-            const decryptedKey = await decryptMessageRSA(
+            const decryptedKey = await encryption.decryptMessageRSA(
               encryptedKey,
               myKeyPair.privateKey
             );
-            const aesKey = await importSymmetricKey(decryptedKey);
-            decrypted = await decryptMessageAES(encrypted, iv, aesKey);
+            const aesKey = await encryption.importSymmetricKey(decryptedKey);
+            decrypted = await encryption.decryptMessageAES(
+              encrypted,
+              iv,
+              aesKey
+            );
             setMessages((prev) => [
               ...prev,
               {
@@ -613,7 +395,11 @@ function App() {
             ]);
           } else {
             const { encrypted, iv } = encryptedImage;
-            decrypted = await decryptMessageAES(encrypted, iv, symmetricKey);
+            decrypted = await encryption.decryptMessageAES(
+              encrypted,
+              iv,
+              symmetricKey
+            );
             setMessages((prev) => [
               ...prev,
               {
@@ -645,7 +431,6 @@ function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    currentRoom,
     roomType,
     myKeyPair,
     symmetricKey,
@@ -679,7 +464,7 @@ function App() {
       alert("Encryption keys not ready. Please try again.");
       return;
     }
-    const symKey = await generateSymmetricKey();
+    const symKey = await encryption.generateSymmetricKey();
     if (!symKey) {
       alert("Symmetric key generation failed. Please try again.");
       return;
@@ -704,7 +489,7 @@ function App() {
     }
     try {
       console.log("Attempting to export public key in handleJoinRoom");
-      const publicKey = await exportPublicKey(myKeyPair.publicKey);
+      const publicKey = await encryption.exportPublicKey(myKeyPair.publicKey);
       socket.emit("joinRoom", {
         roomCode: roomCode.toUpperCase(),
         nickname,
@@ -716,72 +501,17 @@ function App() {
     }
   };
 
-  const handleSendMessage = async () => {
-    if (!message || !currentRoom) return;
-    if (roomType === "two-user" && otherUserPublicKey) {
-      const aesKey = await generateSymmetricKey();
-      const { encrypted, iv } = await encryptMessageAES(message, aesKey);
-      const exportedAesKey = await exportSymmetricKey(aesKey);
-      const encryptedKey = await encryptMessageRSA(
-        exportedAesKey,
-        otherUserPublicKey
-      );
-      socket.emit("sendEncryptedMessage", {
-        roomCode: currentRoom,
-        encryptedMessage: { encrypted, iv, encryptedKey },
-        roomType,
-      });
-      setMessages((prev) => [
-        ...prev,
-        {
-          sender: myNickname,
-          type: "text",
-          content: message,
-          timestamp: formatTimestamp(),
-        },
-      ]);
-      setMessage("");
-      // Reset textarea height to minimum (matches min-h-[45px])
-      if (textareaRef.current) {
-        textareaRef.current.style.height = "45px";
-      }
-    } else if (roomType === "group" && symmetricKey) {
-      const { encrypted, iv } = await encryptMessageAES(message, symmetricKey);
-      socket.emit("sendEncryptedMessage", {
-        roomCode: currentRoom,
-        encryptedMessage: { encrypted, iv },
-        roomType,
-      });
-      setMessages((prev) => [
-        ...prev,
-        {
-          sender: myNickname,
-          type: "text",
-          content: message,
-          timestamp: formatTimestamp(),
-        },
-      ]);
-      setMessage("");
-      // Reset textarea height to minimum (matches min-h-[45px])
-      if (textareaRef.current) {
-        textareaRef.current.style.height = "45px";
-      }
-    } else {
-      alert("Encryption not ready. Please wait for other users.");
-    }
-  };
-
   const handleDisconnect = async () => {
-    console.log("Disconnecting from room:", currentRoom);
-    if (currentRoom) {
-      socket.emit("leaveRoom", { roomCode: currentRoom, nickname: myNickname });
+    console.log("Disconnecting from room:", roomCode);
+    if (roomCode) {
+      socket.emit("leaveRoom", { roomCode: roomCode, nickname: nickname });
       socket.disconnect();
     }
 
     // Reset state
-    setCurrentRoom(null);
+    setRoomCode(null);
     setRoomType(null);
-    setMyNickname(null);
+    setNickname(null);
     setOtherUserId(null);
     setOtherUserNickname(null);
     setOtherUserPublicKey(null);
@@ -855,7 +585,7 @@ function App() {
           <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md flex flex-col h-[calc(100vh-150px)]">
             <div className="flex justify-between items-center text-gray-700 mb-4 shrink-0">
               <span>
-                Room: {currentRoom} |{" "}
+                Room: {roomCode} |{" "}
                 {roomType === "group" ? "Group Chat" : "Two-User Chat"}
               </span>
               <button
@@ -875,7 +605,7 @@ function App() {
                   !isSystemMessage &&
                   (index === 0 || messages[index - 1].sender !== msg.sender);
                 const isOwnMessage =
-                  !isSystemMessage && msg.sender === myNickname;
+                  !isSystemMessage && msg.sender === nickname;
 
                 return (
                   <div

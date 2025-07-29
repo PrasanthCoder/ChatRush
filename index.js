@@ -12,18 +12,20 @@ const io = socketIo(server, {
   },
 });
 
-const rooms = new Map(); // Store room data: { roomCode: { users: [{ userId, nickname, publicKey }], type: 'two-user' | 'group', creatorId: userId } }
+// Store room data:
+// { roomCode: { users: [{ userId, nickname, publicKey }], type: 'two-user' | 'group', creatorId: userId } }
+const rooms = new Map();
 
 function generateRoomCode() {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
-// Serve static files from the 'public' directory
 app.use(express.static(path.join(__dirname, "public")));
 
 io.on("connection", (socket) => {
   console.log("New client connected:", socket.id);
 
+  // room creation
   socket.on("createRoom", ({ nickname }) => {
     const roomCode = generateRoomCode();
     while (rooms.has(roomCode)) {
