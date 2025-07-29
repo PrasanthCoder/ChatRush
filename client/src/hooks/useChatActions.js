@@ -90,27 +90,6 @@ export const useChatActions = (
     resetTextareaHeight,
   ]);
 
-  // Handle image upload input
-  const handleImageUpload = useCallback(
-    (e) => {
-      const file = e.target.files && e.target.files;
-      if (!file) return;
-
-      const validImageTypes = ["image/jpeg", "image/png", "image/gif"];
-      if (!validImageTypes.includes(file.type)) {
-        alert("Only JPEG, PNG, and GIF image types are allowed.");
-        return;
-      }
-
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        sendImageMessage(reader.result);
-      };
-      reader.readAsDataURL(file);
-    },
-    [sendImageMessage]
-  );
-
   // Function to send an image message (extracted from the previous snippet)
   const sendImageMessage = useCallback(
     async (base64Image) => {
@@ -174,6 +153,27 @@ export const useChatActions = (
       nickname,
       formatTimestamp,
     ]
+  );
+
+  // Handle image upload input
+  const handleImageUpload = useCallback(
+    (e) => {
+      const file = e.target.files && e.target.files;
+      if (!file) return;
+
+      const validImageTypes = ["image/jpeg", "image/png", "image/gif"];
+      if (!validImageTypes.includes(file.type)) {
+        alert("Only JPEG, PNG, and GIF image types are allowed.");
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        sendImageMessage(reader.result);
+      };
+      reader.readAsDataURL(file);
+    },
+    [sendImageMessage]
   );
 
   return {
