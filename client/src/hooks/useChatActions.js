@@ -1,6 +1,7 @@
 // hooks/useChatActions.js
 import { useCallback } from "react"; // No useState for 'message' here
 import * as encryption from "../utils/encryption";
+import Compressor from "compressorjs";
 
 export const useChatActions = (
   socket,
@@ -204,11 +205,22 @@ export const useChatActions = (
         return;
       }
 
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        sendImageMessage(reader.result);
-      };
-      reader.readAsDataURL(file);
+      // Compress the image using compressorjs
+      new Compressor(file, {
+        quality: 0.6, // Set compression quality (0.6 for balance between size and quality)
+        convertSize: 1000000, // Convert to JPEG if size > 1MB
+        success(compressedFile) {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            sendImageMessage(reader.result);
+          };
+          reader.readAsDataURL(compressedFile);
+        },
+        error(err) {
+          console.error("Image compression failed:", err);
+          alert("Failed to compress image. Please try again.");
+        },
+      });
     },
     [sendImageMessage]
   );
