@@ -99,6 +99,7 @@ function App() {
         "myKeyPair:",
         !!myKeyPair
       );
+      setRoomCode(roomCode);
       setRoomType(type);
       setIsCreator(true);
       if (type === "group") {

@@ -158,12 +158,18 @@ export const useChatActions = (
   // Handle image upload input
   const handleImageUpload = useCallback(
     (e) => {
-      const file = e.target.files && e.target.files;
+      const file = e.target.files?.[0];
+      console.log("file type: ", file.type);
       if (!file) return;
 
-      const validImageTypes = ["image/jpeg", "image/png", "image/gif"];
+      const validImageTypes = [
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "image/gif",
+      ];
       if (!validImageTypes.includes(file.type)) {
-        alert("Only JPEG, PNG, and GIF image types are allowed.");
+        alert("Only JPEG, JPG, PNG, and GIF image types are allowed.");
         return;
       }
 
