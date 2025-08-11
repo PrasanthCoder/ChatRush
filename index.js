@@ -10,11 +10,15 @@ const io = socketIo(server, {
     origin: "*",
     methods: ["GET", "POST"],
   },
+  maxHttpBufferSize: 1e7,
 });
 
 // Store room data:
 // { roomCode: { users: [{ userId, nickname, publicKey }], type: 'two-user' | 'group', creatorId: userId } }
 const rooms = new Map();
+
+// Store image chunks: { `${socket.id}:${roomCode}`: { chunks: [], totalChunks: number, iv: string, encryptedKey: string } }
+const imageChunks = new Map();
 
 function generateRoomCode() {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -140,6 +144,42 @@ io.on("connection", (socket) => {
       roomType,
     });
   });
+
+  // Added: Handler for receiving image chunks
+  socket.on(
+    "sendEncryptedImageChunk",
+    ({ roomCode, chunk, chunkIndex, totalChunks, roomType }) => {
+      const chunkKey = `${socket.id}:${roomCode}`;
+      let chunkData = imageChunks.get(chunkKey) || {
+        chunks: [],
+        totalChunks,
+        iv: chunk.iv,
+        encryptedKey: chunk.encryptedKey,
+      };
+
+      chunkData.chunks[chunkIndex] = chunk.encrypted;
+
+      imageChunks.set(chunkKey, chunkData);
+
+      if (
+        chunkData.chunks.length === totalChunks &&
+        chunkData.chunks.every((c) => c !== undefined)
+      ) {
+        const reassembledImage = {
+          encrypted: chunkData.chunks.join(""),
+          iv: chunkData.iv,
+          encryptedKey: chunkData.encryptedKey,
+        };
+        imageChunks.delete(chunkKey);
+
+        socket.to(roomCode).emit("newEncryptedImage", {
+          senderId: socket.id,
+          encryptedImage: reassembledImage,
+          roomType,
+        });
+      }
+    }
+  );
 
   socket.on("leaveRoom", ({ roomCode, nickname }) => {
     const room = rooms.get(roomCode);

@@ -15,6 +15,8 @@ export const useChatActions = (
   formatTimestamp,
   textareaRef
 ) => {
+  // Chunk size for image splitting
+  const CHUNK_SIZE = 64 * 1024;
   // Helper function to reset textarea height
   const resetTextareaHeight = useCallback(() => {
     if (textareaRef.current) {
@@ -106,11 +108,22 @@ export const useChatActions = (
           exportedAesKey,
           otherUserPublicKey
         );
-        socket.emit("sendEncryptedImage", {
-          roomCode: roomCode,
-          encryptedImage: { encrypted, iv, encryptedKey },
-          roomType,
+
+        // Chunk the encrypted data and send chunks
+        const chunks = [];
+        for (let i = 0; i < encrypted.length; i += CHUNK_SIZE) {
+          chunks.push(encrypted.slice(i, i + CHUNK_SIZE));
+        }
+        chunks.forEach((chunk, index) => {
+          socket.emit("sendEncryptedImageChunk", {
+            roomCode: roomCode,
+            chunk: { encrypted: chunk, iv, encryptedKey },
+            chunkIndex: index,
+            totalChunks: chunks.length,
+            roomType,
+          });
         });
+
         setMessages((prev) => [
           ...prev,
           {
@@ -125,11 +138,22 @@ export const useChatActions = (
           base64Image,
           symmetricKey
         );
-        socket.emit("sendEncryptedImage", {
-          roomCode: roomCode,
-          encryptedImage: { encrypted, iv },
-          roomType,
+
+        // Chunk the encrypted data and send chunks
+        const chunks = [];
+        for (let i = 0; i < encrypted.length; i += CHUNK_SIZE) {
+          chunks.push(encrypted.slice(i, i + CHUNK_SIZE));
+        }
+        chunks.forEach((chunk, index) => {
+          socket.emit("sendEncryptedImageChunk", {
+            roomCode: roomCode,
+            chunk: { encrypted: chunk, iv },
+            chunkIndex: index,
+            totalChunks: chunks.length,
+            roomType,
+          });
         });
+
         setMessages((prev) => [
           ...prev,
           {
@@ -148,8 +172,9 @@ export const useChatActions = (
       roomType,
       otherUserPublicKey,
       symmetricKey,
-      socket,
       setMessages,
+      CHUNK_SIZE,
+      socket,
       nickname,
       formatTimestamp,
     ]
@@ -170,6 +195,12 @@ export const useChatActions = (
       ];
       if (!validImageTypes.includes(file.type)) {
         alert("Only JPEG, JPG, PNG, and GIF image types are allowed.");
+        return;
+      }
+
+      // Check for image size > 20MB
+      if (file.size > 20 * 1024 * 1024) {
+        alert("Image size exceeds 20MB. Please choose a smaller image.");
         return;
       }
 
