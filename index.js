@@ -162,8 +162,6 @@ io.on("connection", (socket) => {
       sessionToken,
     });
 
-    io.to(roomCode).emit("userJoined", { userId, nickname });
-
     const newUserData = {
       userId,
       nickname,

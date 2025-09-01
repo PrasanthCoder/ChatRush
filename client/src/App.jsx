@@ -71,6 +71,93 @@ function App() {
     textareaRef
   );
 
+  const handleCreateRoom = async () => {
+    console.log("handleCreateRoom triggered", !!myKeyPair);
+    if (!nickname) {
+      alert("Please enter a nickname.");
+      return;
+    }
+    if (!myKeyPair) {
+      alert("Encryption keys not ready. Please try again.");
+      return;
+    }
+    socket.emit("createRoom", { nickname });
+  };
+
+  const handleCreateGroupRoom = async () => {
+    console.log("handleCreateGroupRoom triggered", !!myKeyPair);
+    if (!nickname) {
+      alert("Please enter a nickname.");
+      return;
+    }
+    if (!myKeyPair) {
+      alert("Encryption keys not ready. Please try again.");
+      return;
+    }
+    const symKey = await encryption.generateSymmetricKey();
+    if (!symKey) {
+      alert("Symmetric key generation failed. Please try again.");
+      return;
+    }
+    setSymmetricKey(symKey);
+    socket.emit("createGroupRoom", { nickname });
+  };
+
+  const handleJoinRoom = async () => {
+    console.log("handleJoinRoom triggered", !!myKeyPair);
+    if (!nickname) {
+      alert("Please enter a nickname.");
+      return;
+    }
+    if (!roomCode) {
+      alert("Please enter a room code.");
+      return;
+    }
+    if (!myKeyPair) {
+      alert("Encryption keys not ready. Please try again.");
+      return;
+    }
+    try {
+      const publicKey = await encryption.exportPublicKey(myKeyPair.publicKey);
+      socket.emit("joinRoom", {
+        roomCode: roomCode.toUpperCase(),
+        nickname,
+        publicKey,
+      });
+    } catch (err) {
+      console.error("Failed to export public key in handleJoinRoom:", err);
+      alert("Encryption setup failed. Please try again.");
+    }
+  };
+
+  const handleDisconnect = async () => {
+    console.log("Disconnecting from room:", roomCode);
+    if (roomCode) {
+      socket.emit("leaveRoom", { roomCode: roomCode, nickname: nickname });
+      socket.disconnect();
+    }
+
+    // Reset state
+    setRoomCode(null);
+    setRoomType(null);
+    setNickname(null);
+    setOtherUserId(null);
+    setOtherUserNickname(null);
+    setOtherUserPublicKey(null);
+    setSymmetricKey(null);
+    setIsCreator(false);
+    setUserNicknames(new Map());
+    setMessages([]);
+    setSecurityStatus("Encryption: Ready (waiting for peer)");
+    setUserId(null);
+    setSessionToken(null);
+    setPage("home");
+    setRenderKey((prev) => prev + 1);
+
+    // Reconnect socket for future use
+    socket.connect();
+  };
+
   useEffect(() => {
     socket.connect();
     return () => {
@@ -195,6 +282,14 @@ function App() {
           );
         }
         setPage("chat");
+        setMessages((prev) => [
+          ...prev,
+          {
+            sender: "System",
+            text: "You joined the chat.",
+            timestamp: formatTimestamp(),
+          },
+        ]);
       }
     );
 
@@ -304,14 +399,7 @@ function App() {
           `Encryption: Secured (Symmetric, ${userNicknames.size} peer(s))`
         );
       }
-    });
-
-    socket.on("userJoined", ({ userId: joinedUserId, nickname }) => {
-      console.log("My userId:", userId, "Joined userId:", joinedUserId);
-      const messageText =
-        joinedUserId === userId
-          ? "You joined the chat."
-          : `${nickname} joined the chat.`;
+      const messageText = `${nickname} joined the chat.`;
       setMessages((prev) => [
         ...prev,
         { sender: "System", text: messageText, timestamp: formatTimestamp() },
@@ -570,94 +658,8 @@ function App() {
     sessionToken,
     userId,
     page,
+    handleDisconnect,
   ]);
-
-  const handleCreateRoom = async () => {
-    console.log("handleCreateRoom triggered", !!myKeyPair);
-    if (!nickname) {
-      alert("Please enter a nickname.");
-      return;
-    }
-    if (!myKeyPair) {
-      alert("Encryption keys not ready. Please try again.");
-      return;
-    }
-    socket.emit("createRoom", { nickname });
-  };
-
-  const handleCreateGroupRoom = async () => {
-    console.log("handleCreateGroupRoom triggered", !!myKeyPair);
-    if (!nickname) {
-      alert("Please enter a nickname.");
-      return;
-    }
-    if (!myKeyPair) {
-      alert("Encryption keys not ready. Please try again.");
-      return;
-    }
-    const symKey = await encryption.generateSymmetricKey();
-    if (!symKey) {
-      alert("Symmetric key generation failed. Please try again.");
-      return;
-    }
-    setSymmetricKey(symKey);
-    socket.emit("createGroupRoom", { nickname });
-  };
-
-  const handleJoinRoom = async () => {
-    console.log("handleJoinRoom triggered", !!myKeyPair);
-    if (!nickname) {
-      alert("Please enter a nickname.");
-      return;
-    }
-    if (!roomCode) {
-      alert("Please enter a room code.");
-      return;
-    }
-    if (!myKeyPair) {
-      alert("Encryption keys not ready. Please try again.");
-      return;
-    }
-    try {
-      const publicKey = await encryption.exportPublicKey(myKeyPair.publicKey);
-      socket.emit("joinRoom", {
-        roomCode: roomCode.toUpperCase(),
-        nickname,
-        publicKey,
-      });
-    } catch (err) {
-      console.error("Failed to export public key in handleJoinRoom:", err);
-      alert("Encryption setup failed. Please try again.");
-    }
-  };
-
-  const handleDisconnect = async () => {
-    console.log("Disconnecting from room:", roomCode);
-    if (roomCode) {
-      socket.emit("leaveRoom", { roomCode: roomCode, nickname: nickname });
-      socket.disconnect();
-    }
-
-    // Reset state
-    setRoomCode(null);
-    setRoomType(null);
-    setNickname(null);
-    setOtherUserId(null);
-    setOtherUserNickname(null);
-    setOtherUserPublicKey(null);
-    setSymmetricKey(null);
-    setIsCreator(false);
-    setUserNicknames(new Map());
-    setMessages([]);
-    setSecurityStatus("Encryption: Ready (waiting for peer)");
-    setUserId(null);
-    setSessionToken(null);
-    setPage("home");
-    setRenderKey((prev) => prev + 1);
-
-    // Reconnect socket for future use
-    socket.connect();
-  };
 
   return (
     <div key={renderKey} className="min-h-screen bg-gray-100 flex flex-col">
