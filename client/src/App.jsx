@@ -1,3 +1,23 @@
+// Updated app.jsx
+// Changes:
+// 1. Added [userId, setUserId] = useState(null); [sessionToken, setSessionToken] = useState(null);
+// 2. In "roomCreated" and "roomJoined": setUserId(data.userId), setSessionToken(data.sessionToken)
+// 3. In "roomJoined": existingUsers now have userId, use userId for setOtherUserId, newNicknames.set(user.userId, user.nickname)
+// 4. In "newUser": use userId for setOtherUserId, setUserNicknames.set(userId, nickname), sharePublicKey use userId
+// 5. In "userJoined": use userId for message
+// 6. In "receivedPublicKey": use userId for setOtherUserId if needed
+// 7. In "userLeft": use userId for comparison and remove
+// 8. In "newEncryptedMessage" and "newEncryptedImage": expect senderUserId, use userNicknames.get(senderUserId)
+// 9. In handleCreateRoom, handleCreateGroupRoom, handleJoinRoom: no change
+// 10. In handleDisconnect: added setUserId(null), setSessionToken(null)
+// 11. Added socket.on("connect", () => { if (page === "chat" && roomCode && sessionToken && userId) export publicKey, emit "rejoinRoom" { roomCode, sessionToken, publicKey } })
+// 12. Added socket.on("roomRejoined", (...): set states, update userNicknames with userId, for two-user set otherUserId etc, share publicKey if two-user
+// 13. Added socket.on("invalidRejoin", () => alert, handleDisconnect())
+// 14. Added socket.on("userReconnected", ({ userId, nickname, publicKey }) => update for two-user or group
+// 15. Added socket.on("reshareSymmetricKey", ({ userId, publicKey, roomCode }) => if isCreator, import publicKey, export symmetric, encrypt with RSA, emit shareEncryptedSymmetricKey
+// 16. In "sharePublicKey" emit, use userId (target)
+// 17. In dependencies, add userId, sessionToken where needed
+
 import { useState, useEffect, useRef } from "react";
 import io from "socket.io-client";
 import { FaImage } from "react-icons/fa";
@@ -6,11 +26,11 @@ import * as encryption from "./utils/encryption.js";
 import { useChatActions } from "./hooks/useChatActions";
 
 const socket = io({
-  autoConnect: false, // manual connection
-  reconnection: true, // Enable reconnection
-  reconnectionAttempts: Infinity, // Keep trying to reconnect
-  reconnectionDelay: 500, // reconnection delay
-  reconnectionDelayMax: 2500, // Max delay of 2.5 second
+  autoConnect: false,
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 500,
+  reconnectionDelayMax: 2500,
 });
 
 function App() {
@@ -30,16 +50,18 @@ function App() {
   const [securityStatus, setSecurityStatus] = useState(
     "Encryption: Setting up..."
   );
-  const [renderKey, setRenderKey] = useState(0); // For forcing re-render
+  const [renderKey, setRenderKey] = useState(0);
+  const [userId, setUserId] = useState(null); // Added: Persistent user ID
+  const [sessionToken, setSessionToken] = useState(null); // Added: Session token for rejoin
   const chatboxRef = useRef(null);
-  const textareaRef = useRef(null); // Ref for textarea to reset height
-  const fileInputRef = useRef(null); // Ref for file input
+  const textareaRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const { handleSendMessage, handleImageUpload } = useChatActions(
     socket,
     setMessages,
-    message, // Pass the current message state value
-    setMessage, // Pass the setter function
+    message,
+    setMessage,
     roomCode,
     roomType,
     otherUserPublicKey,
@@ -49,7 +71,6 @@ function App() {
     textareaRef
   );
 
-  // socket connection after first render
   useEffect(() => {
     socket.connect();
     return () => {
@@ -57,7 +78,6 @@ function App() {
     };
   }, []);
 
-  // key-pair gen after first render
   useEffect(() => {
     async function initializeKeys() {
       console.log("Initializing key pair");
@@ -75,14 +95,12 @@ function App() {
     initializeKeys();
   }, []);
 
-  // Auto-scroll to the bottom when messages change
   useEffect(() => {
     if (chatboxRef.current) {
       chatboxRef.current.scrollTop = chatboxRef.current.scrollHeight;
     }
   }, [messages]);
 
-  // Handle textarea expansion and shrinking based on content height
   const handleTextareaChange = (e) => {
     const textarea = e.target;
     setMessage(textarea.value);
@@ -90,54 +108,75 @@ function App() {
     textarea.style.height = textarea.scrollHeight + "px";
   };
 
-  // Socket.IO event handlers
   useEffect(() => {
-    socket.on("roomCreated", async ({ roomCode, nickname, roomType: type }) => {
-      console.log(
-        "roomCreated triggered, roomType:",
-        type,
-        "myKeyPair:",
-        !!myKeyPair
-      );
-      setRoomCode(roomCode);
-      setRoomType(type);
-      setIsCreator(true);
-      if (type === "group") {
-        setUserNicknames(new Map([[socket.id, nickname]]));
-        setSecurityStatus(`Encryption: Secured (Symmetric, 0 peer(s))`);
+    socket.on("connect", async () => {
+      console.log("Connected to server");
+      if (page === "chat" && roomCode && sessionToken && userId && myKeyPair) {
+        try {
+          const publicKey = await encryption.exportPublicKey(
+            myKeyPair.publicKey
+          );
+          socket.emit("rejoinRoom", { roomCode, sessionToken, publicKey });
+        } catch (err) {
+          console.error("Failed to export public key for rejoin:", err);
+        }
       }
-      setPage("chat");
-      alert(
-        `Share this code to join ${
-          type === "group" ? "group" : "two-user"
-        } chat: ${roomCode}`
-      );
     });
 
     socket.on(
+      "roomCreated",
+      async ({ roomCode, nickname, roomType, userId, sessionToken }) => {
+        console.log("roomCreated triggered", roomType, !!myKeyPair);
+        setRoomCode(roomCode);
+        setRoomType(roomType);
+        setIsCreator(true);
+        setUserId(userId);
+        setSessionToken(sessionToken);
+        if (roomType === "group") {
+          setUserNicknames(new Map([[userId, nickname]]));
+          setSecurityStatus(`Encryption: Secured (Symmetric, 0 peer(s))`);
+        }
+        setPage("chat");
+        alert(
+          `Share this code to join ${
+            roomType === "group" ? "group" : "two-user"
+          } chat: ${roomCode}`
+        );
+      }
+    );
+
+    socket.on(
       "roomJoined",
-      async ({ roomCode, nickname, roomType: type, existingUsers }) => {
+      async ({
+        roomCode,
+        nickname,
+        roomType,
+        existingUsers,
+        userId,
+        sessionToken,
+      }) => {
         console.log(
-          "roomJoined triggered, roomType:",
-          type,
+          "roomJoined triggered",
+          roomType,
           nickname,
-          "myKeyPair:",
           !!myKeyPair,
-          "existingUsers:",
           existingUsers
         );
-        setRoomType(type);
+        setRoomType(roomType);
         setIsCreator(false);
-        if (type === "two-user") {
-          setOtherUserNickname(existingUsers[0]?.nickname || "Unknown");
-          setOtherUserId(existingUsers[0]?.userId || null);
-          if (myKeyPair) {
+        setUserId(userId);
+        setSessionToken(sessionToken);
+        if (roomType === "two-user") {
+          const other = existingUsers[0] || {};
+          setOtherUserNickname(other.nickname || "Unknown");
+          setOtherUserId(other.userId || null);
+          if (myKeyPair && other.userId) {
             try {
               const publicKey = await encryption.exportPublicKey(
                 myKeyPair.publicKey
               );
               socket.emit("sharePublicKey", {
-                userId: existingUsers[0]?.userId || null,
+                userId: other.userId,
                 publicKey,
                 roomCode,
               });
@@ -146,7 +185,7 @@ function App() {
             }
           }
         } else {
-          const newNicknames = new Map([[socket.id, nickname]]);
+          const newNicknames = new Map([[userId, nickname]]);
           existingUsers.forEach((user) =>
             newNicknames.set(user.userId, user.nickname)
           );
@@ -158,6 +197,57 @@ function App() {
         setPage("chat");
       }
     );
+
+    socket.on(
+      "roomRejoined",
+      async ({ roomCode, nickname, roomType, existingUsers }) => {
+        console.log(
+          "roomRejoined triggered",
+          roomType,
+          nickname,
+          existingUsers
+        );
+        setRoomCode(roomCode);
+        setRoomType(roomType);
+        setNickname(nickname);
+        if (roomType === "two-user") {
+          const other = existingUsers[0] || {};
+          setOtherUserId(other.userId);
+          setOtherUserNickname(other.nickname);
+          if (other.publicKey) {
+            setOtherUserPublicKey(
+              await encryption.importPublicKey(other.publicKey)
+            );
+            setSecurityStatus("Encryption: Secured (end-to-end encrypted)");
+          }
+          if (myKeyPair && other.userId) {
+            const myPublicKey = await encryption.exportPublicKey(
+              myKeyPair.publicKey
+            );
+            socket.emit("sharePublicKey", {
+              userId: other.userId,
+              publicKey: myPublicKey,
+              roomCode,
+            });
+          }
+        } else {
+          const newNicknames = new Map([[userId, nickname]]);
+          existingUsers.forEach((user) =>
+            newNicknames.set(user.userId, user.nickname)
+          );
+          setUserNicknames(newNicknames);
+          setSecurityStatus(
+            `Encryption: Secured (Symmetric, ${newNicknames.size - 1} peer(s))`
+          );
+        }
+        setPage("chat");
+      }
+    );
+
+    socket.on("invalidRejoin", () => {
+      alert("Unable to rejoin the room. Please join again.");
+      handleDisconnect();
+    });
 
     socket.on("invalidRoom", () =>
       alert("Invalid room code. Please try again.")
@@ -175,14 +265,7 @@ function App() {
     });
 
     socket.on("newUser", async ({ userId, roomType, nickname, publicKey }) => {
-      console.log(
-        "newUser triggered, roomType:",
-        roomType,
-        "myKeyPair:",
-        !!myKeyPair,
-        "userId:",
-        userId
-      );
+      console.log("newUser triggered", roomType, !!myKeyPair, userId);
       if (roomType === "two-user") {
         setOtherUserId(userId);
         setOtherUserNickname(nickname);
@@ -194,7 +277,7 @@ function App() {
             socket.emit("sharePublicKey", {
               userId,
               publicKey: myPublicKey,
-              roomCode: roomCode,
+              roomCode,
             });
           } catch (err) {
             console.error("Failed to share public key in newUser:", err);
@@ -214,7 +297,7 @@ function App() {
           socket.emit("shareEncryptedSymmetricKey", {
             userId,
             encryptedSymmetricKey,
-            roomCode: roomCode,
+            roomCode,
           });
         }
         setSecurityStatus(
@@ -223,9 +306,10 @@ function App() {
       }
     });
 
-    socket.on("userJoined", ({ userId, nickname }) => {
+    socket.on("userJoined", ({ userId: joinedUserId, nickname }) => {
+      console.log("My userId:", userId, "Joined userId:", joinedUserId);
       const messageText =
-        userId === socket.id
+        joinedUserId === userId
           ? "You joined the chat."
           : `${nickname} joined the chat.`;
       setMessages((prev) => [
@@ -235,12 +319,7 @@ function App() {
     });
 
     socket.on("receivedPublicKey", async ({ userId, publicKey, roomType }) => {
-      console.log(
-        "receivedPublicKey triggered, roomType:",
-        roomType,
-        "userId:",
-        userId
-      );
+      console.log("receivedPublicKey triggered", roomType, userId);
       if (roomType === "two-user") {
         try {
           setOtherUserId(userId || otherUserId);
@@ -267,6 +346,33 @@ function App() {
       }
     });
 
+    socket.on(
+      "reshareSymmetricKey",
+      async ({ userId, publicKey, roomCode }) => {
+        if (isCreator && symmetricKey) {
+          try {
+            const importedPublicKey = await encryption.importPublicKey(
+              publicKey
+            );
+            const exportedSymmetricKey = await encryption.exportSymmetricKey(
+              symmetricKey
+            );
+            const encryptedSymmetricKey = await encryption.encryptMessageRSA(
+              exportedSymmetricKey,
+              importedPublicKey
+            );
+            socket.emit("shareEncryptedSymmetricKey", {
+              userId,
+              encryptedSymmetricKey,
+              roomCode,
+            });
+          } catch (err) {
+            console.error("Failed to reshare symmetric key:", err);
+          }
+        }
+      }
+    );
+
     socket.on("newCreator", ({ roomCode }) => {
       if (roomCode) {
         setIsCreator(true);
@@ -284,6 +390,22 @@ function App() {
             `Encryption: Secured (Symmetric, ${userNicknames.size - 1} peer(s))`
           );
         }
+      }
+    });
+
+    socket.on("userReconnected", async ({ userId, nickname, publicKey }) => {
+      if (roomType === "two-user" && userId === otherUserId) {
+        setOtherUserNickname(nickname);
+        try {
+          setOtherUserPublicKey(await encryption.importPublicKey(publicKey));
+        } catch (err) {
+          console.error("Failed to import reconnected public key:", err);
+        }
+      } else if (roomType === "group") {
+        setUserNicknames((prev) => new Map(prev).set(userId, nickname));
+        setSecurityStatus(
+          `Encryption: Secured (Symmetric, ${userNicknames.size - 1} peer(s))`
+        );
       }
     });
 
@@ -323,10 +445,10 @@ function App() {
 
     socket.on(
       "newEncryptedMessage",
-      async ({ senderId, encryptedMessage, roomType: type }) => {
-        if (senderId !== socket.id) {
+      async ({ senderUserId, encryptedMessage, roomType }) => {
+        if (senderUserId !== userId) {
           let decrypted;
-          if (type === "two-user") {
+          if (roomType === "two-user") {
             const { encrypted, iv, encryptedKey } = encryptedMessage;
             const decryptedKey = await encryption.decryptMessageRSA(
               encryptedKey,
@@ -357,7 +479,7 @@ function App() {
             setMessages((prev) => [
               ...prev,
               {
-                sender: userNicknames.get(senderId) || "Unknown",
+                sender: userNicknames.get(senderUserId) || "Unknown",
                 type: "text",
                 content: decrypted,
                 timestamp: formatTimestamp(),
@@ -370,10 +492,10 @@ function App() {
 
     socket.on(
       "newEncryptedImage",
-      async ({ senderId, encryptedImage, roomType: type }) => {
-        if (senderId !== socket.id) {
+      async ({ senderUserId, encryptedImage, roomType }) => {
+        if (senderUserId !== userId) {
           let decrypted;
-          if (type === "two-user") {
+          if (roomType === "two-user") {
             const { encrypted, iv, encryptedKey } = encryptedImage;
             const decryptedKey = await encryption.decryptMessageRSA(
               encryptedKey,
@@ -404,7 +526,7 @@ function App() {
             setMessages((prev) => [
               ...prev,
               {
-                sender: userNicknames.get(senderId) || "Unknown",
+                sender: userNicknames.get(senderUserId) || "Unknown",
                 type: "image",
                 content: decrypted,
                 timestamp: formatTimestamp(),
@@ -416,21 +538,26 @@ function App() {
     );
 
     return () => {
+      socket.off("connect");
       socket.off("roomCreated");
       socket.off("roomJoined");
+      socket.off("roomRejoined");
+      socket.off("invalidRejoin");
       socket.off("invalidRoom");
       socket.off("invalidNickname");
       socket.off("roomFull");
       socket.off("nicknameTaken");
       socket.off("newUser");
       socket.off("userJoined");
+      socket.off("receivedPublicKey");
       socket.off("receiveSymmetricKey");
+      socket.off("reshareSymmetricKey");
       socket.off("newCreator");
+      socket.off("userReconnected");
       socket.off("userLeft");
       socket.off("newEncryptedMessage");
       socket.off("newEncryptedImage");
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     roomType,
     myKeyPair,
@@ -439,11 +566,14 @@ function App() {
     otherUserId,
     otherUserNickname,
     userNicknames,
+    roomCode,
+    sessionToken,
+    userId,
+    page,
   ]);
 
-  // Handlers
   const handleCreateRoom = async () => {
-    console.log("handleCreateRoom triggered, myKeyPair:", !!myKeyPair);
+    console.log("handleCreateRoom triggered", !!myKeyPair);
     if (!nickname) {
       alert("Please enter a nickname.");
       return;
@@ -456,7 +586,7 @@ function App() {
   };
 
   const handleCreateGroupRoom = async () => {
-    console.log("handleCreateGroupRoom triggered, myKeyPair:", !!myKeyPair);
+    console.log("handleCreateGroupRoom triggered", !!myKeyPair);
     if (!nickname) {
       alert("Please enter a nickname.");
       return;
@@ -475,7 +605,7 @@ function App() {
   };
 
   const handleJoinRoom = async () => {
-    console.log("handleJoinRoom triggered, myKeyPair:", !!myKeyPair);
+    console.log("handleJoinRoom triggered", !!myKeyPair);
     if (!nickname) {
       alert("Please enter a nickname.");
       return;
@@ -489,7 +619,6 @@ function App() {
       return;
     }
     try {
-      console.log("Attempting to export public key in handleJoinRoom");
       const publicKey = await encryption.exportPublicKey(myKeyPair.publicKey);
       socket.emit("joinRoom", {
         roomCode: roomCode.toUpperCase(),
@@ -521,6 +650,8 @@ function App() {
     setUserNicknames(new Map());
     setMessages([]);
     setSecurityStatus("Encryption: Ready (waiting for peer)");
+    setUserId(null);
+    setSessionToken(null);
     setPage("home");
     setRenderKey((prev) => prev + 1);
 
