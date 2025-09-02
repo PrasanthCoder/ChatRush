@@ -18,7 +18,7 @@
 // 16. In "sharePublicKey" emit, use userId (target)
 // 17. In dependencies, add userId, sessionToken where needed
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import io from "socket.io-client";
 import { FaImage } from "react-icons/fa";
 import { formatTimestamp } from "./utils/formatConvertions.js";
@@ -130,7 +130,7 @@ function App() {
     }
   };
 
-  const handleDisconnect = async () => {
+  const handleDisconnect = useCallback(async () => {
     console.log("Disconnecting from room:", roomCode);
     if (roomCode) {
       socket.emit("leaveRoom", { roomCode: roomCode, nickname: nickname });
@@ -156,7 +156,7 @@ function App() {
 
     // Reconnect socket for future use
     socket.connect();
-  };
+  }, [nickname, roomCode]);
 
   useEffect(() => {
     socket.connect();
@@ -426,9 +426,6 @@ function App() {
           myKeyPair.privateKey
         );
         setSymmetricKey(await encryption.importSymmetricKey(decryptedKey));
-        setSecurityStatus(
-          `Encryption: Secured (Symmetric, ${userNicknames.size - 1} peer(s))`
-        );
       } catch (err) {
         console.error("Failed to process symmetric key:", err);
       }
@@ -472,12 +469,6 @@ function App() {
             timestamp: formatTimestamp(),
           },
         ]);
-
-        if (roomType === "group") {
-          setSecurityStatus(
-            `Encryption: Secured (Symmetric, ${userNicknames.size - 1} peer(s))`
-          );
-        }
       }
     });
 
